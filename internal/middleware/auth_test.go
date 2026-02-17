@@ -1,10 +1,12 @@
 package middleware_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +42,10 @@ func jwksServer(t *testing.T, kid string, privKey *rsa.PrivateKey) *httptest.Ser
 			},
 		},
 	}
-	data, _ := json.Marshal(jwks)
+	data, err := json.Marshal(jwks)
+	if err != nil {
+		t.Fatalf("failed to marshal JWKS: %v", err)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
@@ -49,9 +54,49 @@ func jwksServer(t *testing.T, kid string, privKey *rsa.PrivateKey) *httptest.Ser
 	return srv
 }
 
+func generateKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	return privKey
+}
+
+type mockUserResolver struct {
+	userID     string
+	err        error
+	calledWith string
+}
+
+func (m *mockUserResolver) ResolveUserID(_ context.Context, cognitoSub string) (string, error) {
+	m.calledWith = cognitoSub
+	return m.userID, m.err
+}
+
+func mustNewAuth(t *testing.T, cfg middleware.AuthConfig) *middleware.Auth {
+	t.Helper()
+	auth, err := middleware.NewAuth(cfg)
+	if err != nil {
+		t.Fatalf("NewAuth failed: %v", err)
+	}
+	return auth
+}
+
+// jwtAuthConfig returns a valid JWT-mode AuthConfig with the given resolver.
+func jwtAuthConfig(jwksURL string, resolver middleware.UserResolver) middleware.AuthConfig {
+	return middleware.AuthConfig{
+		DevMode:      false,
+		JWKSClient:   middleware.NewJWKSClient(jwksURL),
+		Issuer:       "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
+		AppClientID:  "client-1",
+		UserResolver: resolver,
+	}
+}
+
 func TestAuth_DevMode(t *testing.T) {
 	cfg := middleware.AuthConfig{DevMode: true}
-	auth := middleware.NewAuth(cfg)
+	auth := mustNewAuth(t, cfg)
 
 	var capturedUserID string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +137,7 @@ func TestAuth_DevMode(t *testing.T) {
 
 func TestAuth_DevMode_SkipsHealthCheck(t *testing.T) {
 	cfg := middleware.AuthConfig{DevMode: true}
-	auth := middleware.NewAuth(cfg)
+	auth := mustNewAuth(t, cfg)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -109,7 +154,8 @@ func TestAuth_DevMode_SkipsHealthCheck(t *testing.T) {
 }
 
 func TestAuth_SkipsAuthEndpoints(t *testing.T) {
-	// Test both dev mode and JWT mode — auth endpoints should be skipped in both
+	resolver := &mockUserResolver{userID: "unused"}
+
 	tests := []struct {
 		name    string
 		devMode bool
@@ -120,8 +166,13 @@ func TestAuth_SkipsAuthEndpoints(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := middleware.AuthConfig{DevMode: tt.devMode}
-			auth := middleware.NewAuth(cfg)
+			var cfg middleware.AuthConfig
+			if tt.devMode {
+				cfg = middleware.AuthConfig{DevMode: true}
+			} else {
+				cfg = jwtAuthConfig("http://unused", resolver)
+			}
+			auth := mustNewAuth(t, cfg)
 
 			var called bool
 			inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,17 +207,13 @@ func TestAuth_SkipsAuthEndpoints(t *testing.T) {
 }
 
 func TestAuth_JWT_Valid(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	privKey := generateKey(t)
 	kid := "jwt-test-kid"
 	srv := jwksServer(t, kid, privKey)
 
-	cfg := middleware.AuthConfig{
-		DevMode:     false,
-		JWKSClient:  middleware.NewJWKSClient(srv.URL),
-		Issuer:      "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
-		AppClientID: "client-1",
-	}
-	auth := middleware.NewAuth(cfg)
+	resolver := &mockUserResolver{userID: "db-user-uuid-abc"}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
 
 	var capturedUserID string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,21 +238,86 @@ func TestAuth_JWT_Valid(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d (body: %s)", w.Code, w.Body.String())
 	}
-	if capturedUserID != "cognito-sub-123" {
-		t.Errorf("expected userID=cognito-sub-123, got %q", capturedUserID)
+	if capturedUserID != "db-user-uuid-abc" {
+		t.Errorf("expected userID=db-user-uuid-abc, got %q", capturedUserID)
+	}
+	if resolver.calledWith != "cognito-sub-123" {
+		t.Errorf("expected resolver called with cognito-sub-123, got %q", resolver.calledWith)
+	}
+}
+
+func TestAuth_JWT_UserNotFound(t *testing.T) {
+	privKey := generateKey(t)
+	kid := "jwt-test-kid"
+	srv := jwksServer(t, kid, privKey)
+
+	resolver := &mockUserResolver{err: middleware.ErrUserNotFound}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	token := signedToken(t, privKey, kid, jwt.MapClaims{
+		"sub":       "cognito-sub-unknown",
+		"iss":       "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
+		"aud":       "client-1",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"token_use": "id",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/todos", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	auth.Middleware(inner).ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuth_JWT_ResolverInternalError(t *testing.T) {
+	privKey := generateKey(t)
+	kid := "jwt-test-kid"
+	srv := jwksServer(t, kid, privKey)
+
+	resolver := &mockUserResolver{err: fmt.Errorf("connection refused")}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	token := signedToken(t, privKey, kid, jwt.MapClaims{
+		"sub":       "cognito-sub-123",
+		"iss":       "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
+		"aud":       "client-1",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"token_use": "id",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/todos", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	auth.Middleware(inner).ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", w.Code)
 	}
 }
 
 func TestAuth_JWT_MissingHeader(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	privKey := generateKey(t)
 	kid := "jwt-test-kid"
 	srv := jwksServer(t, kid, privKey)
 
-	cfg := middleware.AuthConfig{
-		DevMode:    false,
-		JWKSClient: middleware.NewJWKSClient(srv.URL),
-	}
-	auth := middleware.NewAuth(cfg)
+	resolver := &mockUserResolver{userID: "unused"}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -222,17 +334,13 @@ func TestAuth_JWT_MissingHeader(t *testing.T) {
 }
 
 func TestAuth_JWT_ExpiredToken(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	privKey := generateKey(t)
 	kid := "jwt-test-kid"
 	srv := jwksServer(t, kid, privKey)
 
-	cfg := middleware.AuthConfig{
-		DevMode:     false,
-		JWKSClient:  middleware.NewJWKSClient(srv.URL),
-		Issuer:      "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
-		AppClientID: "client-1",
-	}
-	auth := middleware.NewAuth(cfg)
+	resolver := &mockUserResolver{userID: "unused"}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -258,17 +366,13 @@ func TestAuth_JWT_ExpiredToken(t *testing.T) {
 }
 
 func TestAuth_JWT_WrongIssuer(t *testing.T) {
-	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	privKey := generateKey(t)
 	kid := "jwt-test-kid"
 	srv := jwksServer(t, kid, privKey)
 
-	cfg := middleware.AuthConfig{
-		DevMode:     false,
-		JWKSClient:  middleware.NewJWKSClient(srv.URL),
-		Issuer:      "https://cognito-idp.ap-northeast-2.amazonaws.com/pool-1",
-		AppClientID: "client-1",
-	}
-	auth := middleware.NewAuth(cfg)
+	resolver := &mockUserResolver{userID: "unused"}
+	cfg := jwtAuthConfig(srv.URL, resolver)
+	auth := mustNewAuth(t, cfg)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -293,11 +397,9 @@ func TestAuth_JWT_WrongIssuer(t *testing.T) {
 }
 
 func TestAuth_JWT_InvalidBearerFormat(t *testing.T) {
-	cfg := middleware.AuthConfig{
-		DevMode:    false,
-		JWKSClient: middleware.NewJWKSClient("http://unused"),
-	}
-	auth := middleware.NewAuth(cfg)
+	resolver := &mockUserResolver{userID: "unused"}
+	cfg := jwtAuthConfig("http://unused", resolver)
+	auth := mustNewAuth(t, cfg)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -311,5 +413,53 @@ func TestAuth_JWT_InvalidBearerFormat(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestNewAuth_Validation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     middleware.AuthConfig
+		wantErr bool
+	}{
+		{
+			name:    "dev mode requires no resolver",
+			cfg:     middleware.AuthConfig{DevMode: true},
+			wantErr: false,
+		},
+		{
+			name: "jwt mode without resolver fails",
+			cfg: middleware.AuthConfig{
+				DevMode:    false,
+				JWKSClient: middleware.NewJWKSClient("http://unused"),
+			},
+			wantErr: true,
+		},
+		{
+			name: "jwt mode without JWKS client fails",
+			cfg: middleware.AuthConfig{
+				DevMode:      false,
+				UserResolver: &mockUserResolver{userID: "unused"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "jwt mode with all deps succeeds",
+			cfg: middleware.AuthConfig{
+				DevMode:      false,
+				JWKSClient:   middleware.NewJWKSClient("http://unused"),
+				UserResolver: &mockUserResolver{userID: "unused"},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := middleware.NewAuth(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("NewAuth() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
 	}
 }

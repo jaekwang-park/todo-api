@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path"
 	"strings"
@@ -10,19 +13,37 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// ErrUserNotFound is returned by UserResolver when no user matches the given Cognito sub.
+var ErrUserNotFound = errors.New("user not found")
+
+// UserResolver resolves a Cognito sub claim to a database user ID.
+// Implementations must return ErrUserNotFound (or a wrapped form) when the user does not exist.
+type UserResolver interface {
+	ResolveUserID(ctx context.Context, cognitoSub string) (string, error)
+}
+
 type AuthConfig struct {
-	DevMode     bool
-	JWKSClient  *JWKSClient
-	Issuer      string
-	AppClientID string
+	DevMode      bool
+	JWKSClient   *JWKSClient
+	Issuer       string
+	AppClientID  string
+	UserResolver UserResolver
 }
 
 type Auth struct {
 	cfg AuthConfig
 }
 
-func NewAuth(cfg AuthConfig) *Auth {
-	return &Auth{cfg: cfg}
+func NewAuth(cfg AuthConfig) (*Auth, error) {
+	if !cfg.DevMode {
+		if cfg.UserResolver == nil {
+			return nil, fmt.Errorf("middleware: UserResolver is required when DevMode is false")
+		}
+		if cfg.JWKSClient == nil {
+			return nil, fmt.Errorf("middleware: JWKSClient is required when DevMode is false")
+		}
+	}
+	return &Auth{cfg: cfg}, nil
 }
 
 func (a *Auth) Middleware(next http.Handler) http.Handler {
@@ -102,7 +123,18 @@ func (a *Auth) handleJWT(w http.ResponseWriter, r *http.Request, next http.Handl
 		return
 	}
 
-	ctx := SetUserID(r.Context(), sub)
+	userID, err := a.cfg.UserResolver.ResolveUserID(r.Context(), sub)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeAuthError(w, http.StatusUnauthorized, "UNAUTHORIZED", "user not found")
+		} else {
+			slog.ErrorContext(r.Context(), "user resolution failed", "error", err)
+			writeAuthError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
+		}
+		return
+	}
+
+	ctx := SetUserID(r.Context(), userID)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 

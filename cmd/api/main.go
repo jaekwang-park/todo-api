@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,9 +18,28 @@ import (
 	"github.com/jaekwang-park/todo-api/internal/config"
 	todohttp "github.com/jaekwang-park/todo-api/internal/http"
 	"github.com/jaekwang-park/todo-api/internal/middleware"
+	"github.com/jaekwang-park/todo-api/internal/model"
 	"github.com/jaekwang-park/todo-api/internal/repository"
 	"github.com/jaekwang-park/todo-api/internal/service"
 )
+
+// userResolverAdapter adapts a user repository to the middleware.UserResolver interface.
+type userResolverAdapter struct {
+	repo interface {
+		GetByCognitoSub(ctx context.Context, cognitoSub string) (model.User, error)
+	}
+}
+
+func (a *userResolverAdapter) ResolveUserID(ctx context.Context, cognitoSub string) (string, error) {
+	user, err := a.repo.GetByCognitoSub(ctx, cognitoSub)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", middleware.ErrUserNotFound
+		}
+		return "", fmt.Errorf("failed to resolve user: %w", err)
+	}
+	return user.ID, nil
+}
 
 func main() {
 	// Initial logger at info level; reconfigured after config load
@@ -91,8 +112,12 @@ func run(ctx context.Context) error {
 		authCfg.JWKSClient = middleware.NewJWKSClient(jwksURL)
 		authCfg.Issuer = middleware.CognitoIssuer(cfg.Cognito.Region, cfg.Cognito.UserPoolID)
 		authCfg.AppClientID = cfg.Cognito.AppClientID
+		authCfg.UserResolver = &userResolverAdapter{repo: userRepo}
 	}
-	auth := middleware.NewAuth(authCfg)
+	auth, err := middleware.NewAuth(authCfg)
+	if err != nil {
+		return fmt.Errorf("failed to create auth middleware: %w", err)
+	}
 
 	// HTTP Server
 	srv := todohttp.NewServer(cfg.ServerPort, logger, todoSvc, authSvc, auth)

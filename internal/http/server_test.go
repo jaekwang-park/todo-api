@@ -27,7 +27,8 @@ func freePort(t *testing.T) string {
 }
 
 func newDevAuth() *middleware.Auth {
-	return middleware.NewAuth(middleware.AuthConfig{DevMode: true})
+	auth, _ := middleware.NewAuth(middleware.AuthConfig{DevMode: true})
+	return auth
 }
 
 func TestServer_StartAndShutdown(t *testing.T) {
