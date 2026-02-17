@@ -51,18 +51,31 @@ func sampleTodo() model.Todo {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
 func TestCreate(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   service.CreateTodoInput
-		repoErr error
-		wantErr string
+		name      string
+		input     service.CreateTodoInput
+		repoErr   error
+		wantErr   string
+		wantDueAt bool
 	}{
 		{
 			name:    "success",
 			input:   service.CreateTodoInput{Title: "Buy groceries", Description: "Milk"},
 			repoErr: nil,
 			wantErr: "",
+		},
+		{
+			name:      "success with due_at",
+			input:     service.CreateTodoInput{Title: "Buy groceries", DueAt: strPtr("2025-12-31T23:59:00Z")},
+			wantDueAt: true,
+		},
+		{
+			name:    "invalid due_at format",
+			input:   service.CreateTodoInput{Title: "Buy groceries", DueAt: strPtr("not-a-date")},
+			wantErr: "invalid input",
 		},
 		{
 			name:    "empty title",
@@ -80,14 +93,17 @@ func TestCreate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var capturedTodo model.Todo
 			repo := &mockTodoRepo{
 				createFn: func(ctx context.Context, todo model.Todo) (model.Todo, error) {
 					if tt.repoErr != nil {
 						return model.Todo{}, tt.repoErr
 					}
+					capturedTodo = todo
 					result := sampleTodo()
 					result.Title = todo.Title
 					result.Description = todo.Description
+					result.DueAt = todo.DueAt
 					return result, nil
 				},
 			}
@@ -112,6 +128,15 @@ func TestCreate(t *testing.T) {
 			}
 			if got.Status != model.TodoStatusPending {
 				t.Errorf("expected status=pending, got %s", got.Status)
+			}
+			if tt.wantDueAt {
+				if capturedTodo.DueAt == nil {
+					t.Fatal("expected DueAt to be set, got nil")
+				}
+				wantTime, _ := time.Parse(time.RFC3339, *tt.input.DueAt)
+				if !capturedTodo.DueAt.Equal(wantTime) {
+					t.Errorf("expected DueAt=%v, got %v", wantTime, *capturedTodo.DueAt)
+				}
 			}
 		})
 	}
@@ -166,12 +191,15 @@ func TestUpdate(t *testing.T) {
 	title := "Updated title"
 	desc := "Updated desc"
 	emptyTitle := ""
+	validDueAt := "2025-12-31T23:59:00Z"
+	invalidDueAt := "not-a-date"
 
 	tests := []struct {
-		name    string
-		input   service.UpdateTodoInput
-		getFn   func(ctx context.Context, userID, todoID string) (model.Todo, error)
-		wantErr string
+		name      string
+		input     service.UpdateTodoInput
+		getFn     func(ctx context.Context, userID, todoID string) (model.Todo, error)
+		wantErr   string
+		wantDueAt *time.Time
 	}{
 		{
 			name:  "success update title",
@@ -188,6 +216,25 @@ func TestUpdate(t *testing.T) {
 				return sampleTodo(), nil
 			},
 			wantErr: "",
+		},
+		{
+			name:  "success update due_at",
+			input: service.UpdateTodoInput{DueAt: &validDueAt},
+			getFn: func(ctx context.Context, userID, todoID string) (model.Todo, error) {
+				return sampleTodo(), nil
+			},
+			wantDueAt: func() *time.Time {
+				t, _ := time.Parse(time.RFC3339, validDueAt)
+				return &t
+			}(),
+		},
+		{
+			name:  "invalid due_at format",
+			input: service.UpdateTodoInput{DueAt: &invalidDueAt},
+			getFn: func(ctx context.Context, userID, todoID string) (model.Todo, error) {
+				return sampleTodo(), nil
+			},
+			wantErr: "invalid input",
 		},
 		{
 			name:  "empty title",
@@ -209,9 +256,11 @@ func TestUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var capturedTodo model.Todo
 			repo := &mockTodoRepo{
 				getByIDFn: tt.getFn,
 				updateFn: func(ctx context.Context, todo model.Todo) (model.Todo, error) {
+					capturedTodo = todo
 					return todo, nil
 				},
 			}
@@ -233,6 +282,14 @@ func TestUpdate(t *testing.T) {
 			}
 			if tt.input.Title != nil && got.Title != *tt.input.Title {
 				t.Errorf("expected title=%q, got %q", *tt.input.Title, got.Title)
+			}
+			if tt.wantDueAt != nil {
+				if capturedTodo.DueAt == nil {
+					t.Fatal("expected DueAt to be set, got nil")
+				}
+				if !capturedTodo.DueAt.Equal(*tt.wantDueAt) {
+					t.Errorf("expected DueAt=%v, got %v", *tt.wantDueAt, *capturedTodo.DueAt)
+				}
 			}
 		})
 	}

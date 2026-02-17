@@ -5,10 +5,24 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jaekwang-park/todo-api/internal/model"
 	"github.com/jaekwang-park/todo-api/internal/repository"
 )
+
+// parseDueAt parses an RFC3339 string into *time.Time.
+// Returns nil if input is nil.
+func parseDueAt(s *string) (*time.Time, error) {
+	if s == nil {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, *s)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid due_at format, expected RFC3339", ErrInvalidInput)
+	}
+	return &t, nil
+}
 
 type CreateTodoInput struct {
 	Title       string
@@ -35,11 +49,17 @@ func (s *TodoService) Create(ctx context.Context, userID string, input CreateTod
 		return model.Todo{}, fmt.Errorf("%w: title is required", ErrInvalidInput)
 	}
 
+	dueAt, err := parseDueAt(input.DueAt)
+	if err != nil {
+		return model.Todo{}, err
+	}
+
 	todo := model.Todo{
 		UserID:      userID,
 		Title:       input.Title,
 		Description: input.Description,
 		Status:      model.TodoStatusPending,
+		DueAt:       dueAt,
 	}
 
 	created, err := s.repo.Create(ctx, todo)
@@ -78,6 +98,13 @@ func (s *TodoService) Update(ctx context.Context, userID, todoID string, input U
 	}
 	if input.Description != nil {
 		existing.Description = *input.Description
+	}
+	if input.DueAt != nil {
+		dueAt, err := parseDueAt(input.DueAt)
+		if err != nil {
+			return model.Todo{}, err
+		}
+		existing.DueAt = dueAt
 	}
 
 	updated, err := s.repo.Update(ctx, existing)
