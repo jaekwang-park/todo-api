@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -20,8 +21,22 @@ type Config struct {
 	ServerPort  string
 	AppEnv      string
 	AuthDevMode bool
+	LogLevel    string
 	DB          DBConfig
 	Cognito     CognitoConfig
+}
+
+func (c Config) ParseLogLevel() slog.Level {
+	switch strings.ToLower(c.LogLevel) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func (c Config) Validate() error {
@@ -33,6 +48,14 @@ func (c Config) Validate() error {
 	}
 	if c.AuthDevMode && c.AppEnv != "local" {
 		return fmt.Errorf("AUTH_DEV_MODE must not be enabled in %s environment", c.AppEnv)
+	}
+	if !c.AuthDevMode {
+		if c.Cognito.UserPoolID == "" {
+			return fmt.Errorf("COGNITO_USER_POOL_ID is required when AUTH_DEV_MODE is disabled")
+		}
+		if c.Cognito.AppClientID == "" {
+			return fmt.Errorf("COGNITO_APP_CLIENT_ID is required when AUTH_DEV_MODE is disabled")
+		}
 	}
 	return nil
 }
@@ -58,9 +81,10 @@ func (d DBConfig) DSN() string {
 }
 
 type CognitoConfig struct {
-	Region      string
-	UserPoolID  string
-	AppClientID string
+	Region          string
+	UserPoolID      string
+	AppClientID     string
+	AppClientSecret string
 }
 
 func Load() Config {
@@ -68,6 +92,7 @@ func Load() Config {
 		ServerPort:  envOrDefault("SERVER_PORT", "8080"),
 		AppEnv:      envOrDefault("APP_ENV", "local"),
 		AuthDevMode: strings.EqualFold(envOrDefault("AUTH_DEV_MODE", "false"), "true"),
+		LogLevel:    envOrDefault("LOG_LEVEL", "info"),
 		DB: DBConfig{
 			Host:     envOrDefault("DB_HOST", "localhost"),
 			Port:     envOrDefault("DB_PORT", "5432"),
@@ -77,9 +102,10 @@ func Load() Config {
 			SSLMode:  envOrDefault("DB_SSLMODE", "disable"),
 		},
 		Cognito: CognitoConfig{
-			Region:      envOrDefault("COGNITO_REGION", "ap-northeast-2"),
-			UserPoolID:  os.Getenv("COGNITO_USER_POOL_ID"),
-			AppClientID: os.Getenv("COGNITO_APP_CLIENT_ID"),
+			Region:          envOrDefault("COGNITO_REGION", "ap-northeast-1"),
+			UserPoolID:      os.Getenv("COGNITO_USER_POOL_ID"),
+			AppClientID:     os.Getenv("COGNITO_APP_CLIENT_ID"),
+			AppClientSecret: os.Getenv("COGNITO_APP_CLIENT_SECRET"),
 		},
 	}
 }

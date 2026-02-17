@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jaekwang-park/todo-api/internal/http/handler"
+	"github.com/jaekwang-park/todo-api/internal/middleware"
 	"github.com/jaekwang-park/todo-api/internal/model"
 	"github.com/jaekwang-park/todo-api/internal/service"
 )
@@ -60,6 +61,11 @@ func newTodoHandler(repo *mockTodoRepo) *handler.TodoHandler {
 	return handler.NewTodoHandler(svc)
 }
 
+func withUserID(req *http.Request, userID string) *http.Request {
+	ctx := middleware.SetUserID(req.Context(), userID)
+	return req.WithContext(ctx)
+}
+
 func TestTodoHandler_Create(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -106,7 +112,7 @@ func TestTodoHandler_Create(t *testing.T) {
 
 			h := newTodoHandler(repo)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/todos", bytes.NewBufferString(tt.body))
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -159,7 +165,7 @@ func TestTodoHandler_GetByID(t *testing.T) {
 			h := newTodoHandler(repo)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/todos/"+tt.todoID, nil)
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -213,7 +219,7 @@ func TestTodoHandler_Update(t *testing.T) {
 			h := newTodoHandler(repo)
 
 			req := httptest.NewRequest(http.MethodPut, "/api/v1/todos/todo-1", bytes.NewBufferString(tt.body))
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -245,7 +251,7 @@ func TestTodoHandler_Delete(t *testing.T) {
 			h := newTodoHandler(repo)
 
 			req := httptest.NewRequest(http.MethodDelete, "/api/v1/todos/todo-1", nil)
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -308,7 +314,7 @@ func TestTodoHandler_UpdateStatus(t *testing.T) {
 			h := newTodoHandler(repo)
 
 			req := httptest.NewRequest(tt.method, "/api/v1/todos/todo-1/status", bytes.NewBufferString(tt.body))
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -373,7 +379,7 @@ func TestTodoHandler_List(t *testing.T) {
 			h := newTodoHandler(repo)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/todos"+tt.query, nil)
-			req.Header.Set("X-User-ID", "user-1")
+			req = withUserID(req, "user-1")
 			w := httptest.NewRecorder()
 
 			h.ServeHTTP(w, req)
@@ -391,7 +397,7 @@ func TestTodoHandler_MethodNotAllowed(t *testing.T) {
 
 	// PATCH on collection
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/todos", nil)
-	req.Header.Set("X-User-ID", "user-1")
+	req = withUserID(req, "user-1")
 	w := httptest.NewRecorder()
 
 	h.ServeHTTP(w, req)

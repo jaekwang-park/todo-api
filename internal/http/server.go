@@ -16,11 +16,15 @@ type Server struct {
 	logger     *slog.Logger
 }
 
-func NewServer(port string, logger *slog.Logger, todoSvc *service.TodoService) *Server {
-	router := NewRouter(todoSvc)
+func NewServer(port string, logger *slog.Logger, todoSvc *service.TodoService, authSvc *service.AuthService, auth *middleware.Auth) *Server {
+	router := NewRouter(todoSvc, authSvc)
 
-	// Apply middleware chain: recovery -> logging -> router
-	chain := middleware.Recovery(logger)(middleware.Logging(logger)(router))
+	// Middleware chain: recovery -> logging -> auth -> router
+	chain := middleware.Recovery(logger)(
+		middleware.Logging(logger)(
+			auth.Middleware(router),
+		),
+	)
 
 	return &Server{
 		httpServer: &http.Server{

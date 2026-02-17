@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -11,8 +12,8 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"SERVER_PORT", "DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD",
-		"DB_NAME", "DB_SSLMODE", "APP_ENV", "AUTH_DEV_MODE",
-		"COGNITO_REGION", "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID",
+		"DB_NAME", "DB_SSLMODE", "APP_ENV", "AUTH_DEV_MODE", "LOG_LEVEL",
+		"COGNITO_REGION", "COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID", "COGNITO_APP_CLIENT_SECRET",
 	} {
 		t.Setenv(key, "")
 	}
@@ -36,7 +37,7 @@ func TestLoad_Defaults(t *testing.T) {
 		{"DB.Password", cfg.DB.Password, "todo"},
 		{"DB.Name", cfg.DB.Name, "todo"},
 		{"DB.SSLMode", cfg.DB.SSLMode, "disable"},
-		{"Cognito.Region", cfg.Cognito.Region, "ap-northeast-2"},
+		{"Cognito.Region", cfg.Cognito.Region, "ap-northeast-1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -49,6 +50,12 @@ func TestLoad_Defaults(t *testing.T) {
 	t.Run("AuthDevMode", func(t *testing.T) {
 		if cfg.AuthDevMode {
 			t.Errorf("got AuthDevMode=true, want false")
+		}
+	})
+
+	t.Run("LogLevel", func(t *testing.T) {
+		if cfg.LogLevel != "info" {
+			t.Errorf("got LogLevel=%s, want info", cfg.LogLevel)
 		}
 	})
 }
@@ -66,6 +73,8 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("COGNITO_REGION", "us-east-1")
 	t.Setenv("COGNITO_USER_POOL_ID", "pool-123")
 	t.Setenv("COGNITO_APP_CLIENT_ID", "client-456")
+	t.Setenv("COGNITO_APP_CLIENT_SECRET", "secret-789")
+	t.Setenv("LOG_LEVEL", "debug")
 
 	cfg := config.Load()
 
@@ -85,6 +94,8 @@ func TestLoad_FromEnv(t *testing.T) {
 		{"Cognito.Region", cfg.Cognito.Region, "us-east-1"},
 		{"Cognito.UserPoolID", cfg.Cognito.UserPoolID, "pool-123"},
 		{"Cognito.AppClientID", cfg.Cognito.AppClientID, "client-456"},
+		{"Cognito.AppClientSecret", cfg.Cognito.AppClientSecret, "secret-789"},
+		{"LogLevel", cfg.LogLevel, "debug"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -160,23 +171,57 @@ func TestConfig_DSN(t *testing.T) {
 	}
 }
 
+func TestConfig_ParseLogLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  slog.Level
+	}{
+		{"debug", "debug", slog.LevelDebug},
+		{"info", "info", slog.LevelInfo},
+		{"warn", "warn", slog.LevelWarn},
+		{"error", "error", slog.LevelError},
+		{"uppercase DEBUG", "DEBUG", slog.LevelDebug},
+		{"mixed case Warn", "Warn", slog.LevelWarn},
+		{"empty defaults to info", "", slog.LevelInfo},
+		{"invalid defaults to info", "verbose", slog.LevelInfo},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv("LOG_LEVEL", tt.value)
+
+			cfg := config.Load()
+			got := cfg.ParseLogLevel()
+
+			if got != tt.want {
+				t.Errorf("LOG_LEVEL=%q: got %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
-		name    string
-		port    string
-		env     string
-		devMode string
-		wantErr string
+		name       string
+		port       string
+		env        string
+		devMode    string
+		poolID     string
+		clientID   string
+		wantErr    string
 	}{
-		{"valid local", "8080", "local", "true", ""},
-		{"valid alpha", "8080", "alpha", "false", ""},
-		{"valid beta", "9090", "beta", "false", ""},
-		{"valid prod", "80", "prod", "false", ""},
-		{"invalid port", "abc", "local", "false", "invalid SERVER_PORT"},
-		{"invalid env", "8080", "staging", "false", "invalid APP_ENV"},
-		{"dev mode in alpha", "8080", "alpha", "true", "AUTH_DEV_MODE must not be enabled"},
-		{"dev mode in beta", "8080", "beta", "true", "AUTH_DEV_MODE must not be enabled"},
-		{"dev mode in prod", "8080", "prod", "true", "AUTH_DEV_MODE must not be enabled"},
+		{"valid local dev mode", "8080", "local", "true", "", "", ""},
+		{"valid alpha", "8080", "alpha", "false", "pool-1", "client-1", ""},
+		{"valid beta", "9090", "beta", "false", "pool-1", "client-1", ""},
+		{"valid prod", "80", "prod", "false", "pool-1", "client-1", ""},
+		{"invalid port", "abc", "local", "false", "", "", "invalid SERVER_PORT"},
+		{"invalid env", "8080", "staging", "false", "", "", "invalid APP_ENV"},
+		{"dev mode in alpha", "8080", "alpha", "true", "", "", "AUTH_DEV_MODE must not be enabled"},
+		{"dev mode in beta", "8080", "beta", "true", "", "", "AUTH_DEV_MODE must not be enabled"},
+		{"dev mode in prod", "8080", "prod", "true", "", "", "AUTH_DEV_MODE must not be enabled"},
+		{"missing pool id non-dev", "8080", "local", "false", "", "client-1", "COGNITO_USER_POOL_ID is required"},
+		{"missing client id non-dev", "8080", "local", "false", "pool-1", "", "COGNITO_APP_CLIENT_ID is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -184,6 +229,12 @@ func TestConfig_Validate(t *testing.T) {
 			t.Setenv("SERVER_PORT", tt.port)
 			t.Setenv("APP_ENV", tt.env)
 			t.Setenv("AUTH_DEV_MODE", tt.devMode)
+			if tt.poolID != "" {
+				t.Setenv("COGNITO_USER_POOL_ID", tt.poolID)
+			}
+			if tt.clientID != "" {
+				t.Setenv("COGNITO_APP_CLIENT_ID", tt.clientID)
+			}
 
 			cfg := config.Load()
 			err := cfg.Validate()

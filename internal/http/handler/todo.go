@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jaekwang-park/todo-api/internal/middleware"
 	"github.com/jaekwang-park/todo-api/internal/model"
 	"github.com/jaekwang-park/todo-api/internal/service"
 )
@@ -208,11 +209,8 @@ func (h *TodoHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, result)
 }
 
-// getUserID extracts user ID from request context.
-// In Milestone 4, this will come from JWT middleware.
-// For now, it reads from X-User-ID header (dev mode).
 func getUserID(r *http.Request) string {
-	return r.Header.Get("X-User-ID")
+	return middleware.GetUserID(r)
 }
 
 func handleServiceError(w http.ResponseWriter, err error) {
