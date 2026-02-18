@@ -48,7 +48,7 @@ func TestJWKSClient_FetchKey(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwksData)
+		_, _ = w.Write(jwksData)
 	}))
 	defer server.Close()
 
@@ -69,7 +69,7 @@ func TestJWKSClient_KeyNotFound(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwksData)
+		_, _ = w.Write(jwksData)
 	}))
 	defer server.Close()
 
@@ -88,7 +88,7 @@ func TestJWKSClient_CachesKeys(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwksData)
+		_, _ = w.Write(jwksData)
 	}))
 	defer server.Close()
 
@@ -118,7 +118,7 @@ func TestJWKSClient_RateLimitRefreshOnMissingKid(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(jwksData)
+		_, _ = w.Write(jwksData)
 	}))
 	defer server.Close()
 

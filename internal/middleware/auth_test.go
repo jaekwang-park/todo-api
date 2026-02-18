@@ -48,7 +48,7 @@ func jwksServer(t *testing.T, kid string, privKey *rsa.PrivateKey) *httptest.Ser
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		_, _ = w.Write(data)
 	}))
 	t.Cleanup(srv.Close)
 	return srv

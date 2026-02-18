@@ -141,7 +141,7 @@ func (a *Auth) handleJWT(w http.ResponseWriter, r *http.Request, next http.Handl
 func writeAuthError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]any{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]string{
 			"code":    code,
 			"message": message,
