@@ -38,6 +38,7 @@ jobs:
     name: Deploy
     needs: test
     runs-on: ubuntu-latest
+    environment: alpha
     steps:
       - uses: actions/checkout@v4
 
