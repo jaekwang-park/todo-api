@@ -288,7 +288,8 @@ resource "aws_iam_role_policy" "terraform_resources" {
           "rds:RemoveTagsFromResource",
           "rds:ListTagsForResource",
           "rds:DescribeDBEngineVersions",
-          "rds:DescribeOrderableDBInstanceOptions"
+          "rds:DescribeOrderableDBInstanceOptions",
+          "rds:DescribeGlobalClusters"
         ]
         Resource = "*"
       },
