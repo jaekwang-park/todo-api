@@ -257,9 +257,10 @@ resource "aws_iam_role_policy" "terraform_resources" {
         Sid    = "IAMOIDCRead"
         Effect = "Allow"
         Action = [
-          "iam:GetOpenIDConnectProvider"
+          "iam:GetOpenIDConnectProvider",
+          "iam:ListOpenIDConnectProviders"
         ]
-        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/*"
+        Resource = "*"
       },
       {
         Sid    = "ALB"
