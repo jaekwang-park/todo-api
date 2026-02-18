@@ -102,7 +102,10 @@ resource "aws_iam_role_policy" "ecs_deploy" {
         Action = [
           "ecs:ExecuteCommand"
         ]
-        Resource = "${var.ecs_cluster_arn}/*"
+        Resource = [
+          var.ecs_cluster_arn,
+          "${var.ecs_cluster_arn}/*"
+        ]
       },
       {
         Effect = "Allow"
