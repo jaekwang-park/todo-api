@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.23"
+  TF_VERSION: "1.5.7"
+  AWS_REGION: ap-northeast-1
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  terraform-check:
+    name: Terraform Check
+    runs-on: ubuntu-latest
+    environment: alpha
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive infra/
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-api-alpha-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: infra/envs/alpha
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: infra/envs/alpha
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: infra/envs/alpha
+        run: terraform plan -no-color -var="aws_profile="
+        env:
+          TF_VAR_cognito_user_pool_id: ${{ secrets.TF_VAR_cognito_user_pool_id }}
+          TF_VAR_cognito_app_client_id: ${{ secrets.TF_VAR_cognito_app_client_id }}
+          TF_VAR_cognito_app_client_secret: ${{ secrets.TF_VAR_cognito_app_client_secret }}

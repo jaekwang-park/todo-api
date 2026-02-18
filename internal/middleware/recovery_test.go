@@ -73,7 +73,7 @@ func TestRecovery_PanicAfterHeaderWritten(t *testing.T) {
 	logger, logBuf := newTestLogger()
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"partial"}`))
+		_, _ = w.Write([]byte(`{"status":"partial"}`))
 		panic("panic after write")
 	})
 

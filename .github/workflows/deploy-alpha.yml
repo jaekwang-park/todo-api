@@ -1,0 +1,104 @@
+name: Deploy Alpha
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-alpha
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  GO_VERSION: "1.23"
+  TF_VERSION: "1.5.7"
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: todo-api-alpha
+  ECS_CLUSTER: todo-api-alpha
+  ECS_SERVICE: todo-api-alpha
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: go test -race ./...
+
+  deploy:
+    name: Deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: alpha
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/todo-api-alpha-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+            -t ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest \
+            .
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform init
+        working-directory: infra/envs/alpha
+        run: terraform init
+
+      - name: Terraform apply
+        working-directory: infra/envs/alpha
+        run: terraform apply -auto-approve -var="image_tag=${{ github.sha }}" -var="aws_profile="
+        env:
+          TF_VAR_cognito_user_pool_id: ${{ secrets.TF_VAR_cognito_user_pool_id }}
+          TF_VAR_cognito_app_client_id: ${{ secrets.TF_VAR_cognito_app_client_id }}
+          TF_VAR_cognito_app_client_secret: ${{ secrets.TF_VAR_cognito_app_client_secret }}
+
+      - name: Wait for ECS service stability
+        timeout-minutes: 10
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Run database migration
+        run: |
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --desired-status RUNNING \
+            --query 'taskArns[0]' \
+            --output text)
+
+          aws ecs execute-command \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task "${TASK_ARN}" \
+            --container ${{ env.ECS_SERVICE }} \
+            --command "/bin/sh -c 'migrate -path ./migrations -database postgres://\${DB_USER}:\${DB_PASSWORD}@\${DB_HOST}:\${DB_PORT}/\${DB_NAME}?sslmode=\${DB_SSLMODE} up'"

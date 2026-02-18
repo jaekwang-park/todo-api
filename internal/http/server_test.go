@@ -124,5 +124,5 @@ func TestServer_AuthMiddlewareApplied(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
+	_ = srv.Shutdown(ctx)
 }

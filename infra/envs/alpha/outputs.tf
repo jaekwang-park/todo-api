@@ -22,3 +22,8 @@ output "rds_endpoint" {
   description = "Aurora cluster endpoint"
   value       = module.rds.cluster_endpoint
 }
+
+output "github_actions_role_arn" {
+  description = "IAM role ARN for GitHub Actions OIDC"
+  value       = var.github_repository != "" ? module.github_oidc[0].role_arn : ""
+}

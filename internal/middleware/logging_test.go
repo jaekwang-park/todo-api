@@ -43,7 +43,7 @@ func TestLogging_DefaultStatusWhenNoExplicitWriteHeader(t *testing.T) {
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Write body without calling WriteHeader — Go implicitly sends 200
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 
 	h := middleware.Logging(logger)(inner)

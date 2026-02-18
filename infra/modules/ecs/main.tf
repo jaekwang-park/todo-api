@@ -73,11 +73,12 @@ resource "aws_ecs_task_definition" "main" {
 }
 
 resource "aws_ecs_service" "main" {
-  name            = "${var.project}-${var.env}"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.main.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+  name                   = "${var.project}-${var.env}"
+  cluster                = aws_ecs_cluster.main.id
+  task_definition        = aws_ecs_task_definition.main.arn
+  desired_count          = var.desired_count
+  launch_type            = "FARGATE"
+  enable_execute_command = var.enable_execute_command
 
   network_configuration {
     subnets          = var.public_subnet_ids
