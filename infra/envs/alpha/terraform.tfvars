@@ -25,3 +25,6 @@ ecs_cpu            = 256
 ecs_memory         = 512
 ecs_desired_count  = 1
 log_retention_days = 14
+
+# GitHub Actions
+github_repository = "jaekwang-park/todo-api"

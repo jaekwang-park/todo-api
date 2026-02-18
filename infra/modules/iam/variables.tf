@@ -17,3 +17,9 @@ variable "ssm_parameter_arns" {
   description = "ARNs of SSM parameters that ECS task execution role can read"
   type        = list(string)
 }
+
+variable "enable_ecs_exec" {
+  description = "Add SSM session permissions to task role for ECS Exec"
+  type        = bool
+  default     = false
+}

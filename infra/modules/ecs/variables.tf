@@ -95,3 +95,9 @@ variable "secret_vars" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_execute_command" {
+  description = "Enable ECS Exec for the service"
+  type        = bool
+  default     = false
+}

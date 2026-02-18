@@ -23,7 +23,7 @@ terraform {
 
 provider "aws" {
   region  = var.aws_region
-  profile = var.aws_profile
+  profile = var.aws_profile != "" ? var.aws_profile : null
 
   default_tags {
     tags = {
@@ -178,6 +178,7 @@ module "iam" {
     aws_ssm_parameter.db_password.arn,
     aws_ssm_parameter.cognito_app_client_secret.arn,
   ]
+  enable_ecs_exec = true
 }
 
 # ==============================================================================
@@ -241,6 +242,8 @@ module "ecs" {
   log_retention_days      = var.log_retention_days
   aws_region              = var.aws_region
 
+  enable_execute_command = true
+
   env_vars = {
     APP_ENV               = var.env
     SERVER_PORT           = "8080"
@@ -260,4 +263,26 @@ module "ecs" {
     DB_PASSWORD               = aws_ssm_parameter.db_password.arn
     COGNITO_APP_CLIENT_SECRET = aws_ssm_parameter.cognito_app_client_secret.arn
   }
+}
+
+# ==============================================================================
+# GitHub Actions OIDC
+# ==============================================================================
+
+module "github_oidc" {
+  source = "../../modules/github-oidc"
+  count  = var.github_repository != "" ? 1 : 0
+
+  project                    = var.project
+  env                        = var.env
+  github_repository          = var.github_repository
+  ecr_repository_arn         = module.ecr.repository_arn
+  ecs_cluster_arn            = module.ecs.cluster_arn
+  ecs_service_arn            = module.ecs.service_arn
+  task_definition_arn_prefix = module.ecs.task_definition_arn
+  task_execution_role_arn    = module.iam.ecs_task_execution_role_arn
+  task_role_arn              = module.iam.ecs_task_role_arn
+  tf_state_bucket            = "todo-alpha-tf-state-jaekwang"
+  tf_lock_table              = "todo-alpha-tf-lock"
+  aws_region                 = var.aws_region
 }

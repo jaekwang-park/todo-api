@@ -4,8 +4,9 @@ variable "aws_region" {
 }
 
 variable "aws_profile" {
-  description = "AWS CLI profile"
+  description = "AWS CLI profile (empty string uses default credentials)"
   type        = string
+  default     = ""
 }
 
 variable "project" {
@@ -107,4 +108,11 @@ variable "cognito_app_client_secret" {
   description = "Cognito App Client Secret"
   type        = string
   sensitive   = true
+}
+
+# GitHub Actions OIDC
+variable "github_repository" {
+  description = "GitHub repository in format owner/repo"
+  type        = string
+  default     = ""
 }
