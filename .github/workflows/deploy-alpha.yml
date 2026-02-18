@@ -101,4 +101,5 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --task "${TASK_ARN}" \
             --container ${{ env.ECS_SERVICE }} \
+            --interactive \
             --command "/bin/sh -c 'migrate -path ./migrations -database postgres://\${DB_USER}:\${DB_PASSWORD}@\${DB_HOST}:\${DB_PORT}/\${DB_NAME}?sslmode=\${DB_SSLMODE} up'"
